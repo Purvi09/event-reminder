@@ -1,0 +1,502 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for Event Reminder App with exact-time alerts
+
+Resources:
+  # DynamoDB Table for Events
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Events
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: event_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: event_id
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+  # SNS Topic for Notifications
+  ReminderNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ReminderNotifications
+
+  # SQS Queue for Reminders
+  ReminderQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ReminderQueue
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref ReminderNotificationsTopic
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                Resource: !GetAtt ReminderQueue.Arn
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:DeleteSchedule
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt SchedulerRole.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: arn:aws:s3:::event-reminder-lambda-artifacts/*
+
+  # IAM Role for EventBridge Scheduler
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SchedulerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CheckReminders'
+
+  # Lambda Functions
+  CreateEventLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CreateEvent
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Code:
+        S3Bucket: event-reminder-lambda-artifacts
+        S3Key: create_event.zip
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref EventsTable
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
+          CHECK_REMINDERS_LAMBDA_ARN: !GetAtt CheckRemindersLambda.Arn
+      Timeout: 30
+
+  ListEventsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ListEvents
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Code:
+        S3Bucket: event-reminder-lambda-artifacts
+        S3Key: list_events.zip
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref EventsTable
+      Timeout: 30
+
+  UpdateEventLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: UpdateEvent
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Code:
+        S3Bucket: event-reminder-lambda-artifacts
+        S3Key: update_event.zip
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref EventsTable
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
+          CHECK_REMINDERS_LAMBDA_ARN: !GetAtt CheckRemindersLambda.Arn
+      Timeout: 30
+
+  DeleteEventLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DeleteEvent
+      Handler: lambda_function.lambda_handler   
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Code:
+        S3Bucket: event-reminder-lambda-artifacts
+        S3Key: delete_event.zip
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref EventsTable
+      Timeout: 30
+
+  CheckRemindersLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CheckReminders
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Code:
+        S3Bucket: event-reminder-lambda-artifacts
+        S3Key: check_reminders.zip
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref EventsTable
+          SNS_TOPIC_ARN: !Ref ReminderNotificationsTopic
+      Timeout: 30
+
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: EventReminderPool
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireNumbers: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+      AutoVerifiedAttributes: 
+        - email  # Enable email verification
+      MfaConfiguration: "OFF"
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT  # Use Cognito's default email service
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: EventReminderClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED  # Optional: Improves security by hiding user existence
+
+  # API Gateway
+  EventReminderApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: EventReminderApi
+      Description: API for Event Reminder App
+
+  EventsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ParentId: !GetAtt EventReminderApi.RootResourceId
+      PathPart: events
+
+  EventIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ParentId: !Ref EventsResource
+      PathPart: '{eventId}'
+
+  # OPTIONS Method for /events (CORS Preflight)
+  EventsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ResourceId: !Ref EventsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  # OPTIONS Method for /events/{eventId} (CORS Preflight)
+  EventIdOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ResourceId: !Ref EventIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  CreateEventMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ResourceId: !Ref EventsResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateEventLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 400
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  ListEventsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ResourceId: !Ref EventsResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ListEventsLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 400
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  UpdateEventMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ResourceId: !Ref EventIdResource
+      HttpMethod: PUT
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateEventLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 400
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  DeleteEventMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      ResourceId: !Ref EventIdResource
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteEventLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 400
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  ApiAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      RestApiId: !Ref EventReminderApi
+      ProviderARNs:
+        - !GetAtt UserPool.Arn
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - EventsOptionsMethod
+      - EventIdOptionsMethod
+      - CreateEventMethod
+      - ListEventsMethod
+      - UpdateEventMethod
+      - DeleteEventMethod
+    Properties:
+      RestApiId: !Ref EventReminderApi
+      StageName: prod
+
+  # Lambda Permissions for API Gateway
+  CreateEventLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CreateEventLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EventReminderApi}/*/POST/events'
+
+  ListEventsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ListEventsLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EventReminderApi}/*/GET/events'
+
+  UpdateEventLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UpdateEventLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EventReminderApi}/*/PUT/events/*'
+
+  DeleteEventLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DeleteEventLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EventReminderApi}/*/DELETE/events/*'
+
+  # S3 Bucket for Frontend
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub event-reminder-frontend-${AWS::AccountId}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  ApiUrl:
+    Value: !Sub 'https://${EventReminderApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  FrontendUrl:
+    Value: !GetAtt FrontendBucket.WebsiteURL
+  SNSTopicArn:
+    Value: !Ref ReminderNotificationsTopic
+  SQSQueueUrl:
+    Value: !Ref ReminderQueue
