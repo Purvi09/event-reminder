@@ -32,16 +32,16 @@ pipeline {
         }
 
         stage('Deploy Infrastructure') {
-            steps {
-                dir('infrastructure') {
-                    sh '''
-                        . ../venv/bin/activate
-                        pip install awscli
-                        aws --version
-                        aws cloudformation deploy --template-file cfn-dev.yaml --stack-name EventReminderStack --capabilities CAPABILITY_IAM
-                    '''
-                }
+        steps {
+            dir('infrastructure') {
+                sh '''
+                    . ../venv/bin/activate
+                    pip install awscli
+                    aws --version
+                    aws cloudformation deploy --template-file cfn-dev.yaml --stack-name EventReminderStack --capabilities CAPABILITY_IAM --region us-east-1
+                '''
             }
+        }
 }
 
     }
