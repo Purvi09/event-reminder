@@ -35,17 +35,15 @@ pipeline {
             steps {
                 dir('infrastructure') {
                     sh '''
-                        apt-get update
-                        apt-get install -y unzip curl
-                        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                        unzip awscliv2.zip
-                        ./aws/install
+                        . ../venv/bin/activate
+                        pip install awscli
                         aws --version
                         aws cloudformation deploy --template-file cfn-dev.yaml --stack-name EventReminderStack --capabilities CAPABILITY_IAM
                     '''
                 }
             }
-        }
+}
+
     }
 
     post {
