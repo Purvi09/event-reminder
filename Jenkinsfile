@@ -1,5 +1,9 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'python:3.10'
+        }
+    }
 
     environment {
         BUCKET_NAME = 'event-reminder-lambda-artifacts'
