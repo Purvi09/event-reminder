@@ -25,7 +25,7 @@ pipeline {
         stage('Upload Lambda Functions to S3') {
             steps {
                 sh '''
-                    source venv/bin/activate
+                    . venv/bin/activate
                     python3 upload_lambda_to_s3.py --bucket $BUCKET_NAME
                 '''
             }
