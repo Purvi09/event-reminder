@@ -57,12 +57,6 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action:
-                  - sqs:SendMessage
-                  - sqs:ReceiveMessage
-                  - sqs:DeleteMessage
-                Resource: !GetAtt ReminderQueue.Arn
-              - Effect: Allow
-                Action:
                   - scheduler:CreateSchedule
                   - scheduler:DeleteSchedule
                 Resource: '*'
