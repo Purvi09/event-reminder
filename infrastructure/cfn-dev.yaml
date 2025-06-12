@@ -9,6 +9,11 @@ Parameters:
     Default: purvigandhi2002@gmail.com
 
 Resources:
+  LambdaArtifactsBucket:
+  Type: AWS::S3::Bucket
+  Properties:
+    BucketName: event-reminder-lambda-artifacts
+    
   EventsTable:
     Type: AWS::DynamoDB::Table
     Properties:
