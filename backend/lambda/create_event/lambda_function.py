@@ -25,6 +25,7 @@ def lambda_handler(event, context):
     try:
         print(event)
         user_id = event['requestContext']['authorizer']['claims']['sub']
+        email_id=event['requestContext']['authorizer']['claims']['email']
         body = json.loads(event['body'])
         
         event_name = body.get('event_name')
@@ -55,6 +56,7 @@ def lambda_handler(event, context):
             Item={
                 'user_id': user_id,
                 'event_id': event_id,
+                'email_id':email_id,
                 'event_name': event_name,
                 'event_description': event_description,
                 'event_time': event_time,

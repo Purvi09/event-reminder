@@ -1,8 +1,14 @@
+
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFormation template for Event Reminder App with exact-time alerts
+Description: CloudFormation template for Event Reminder App with exact-time email alerts via SES
+
+Parameters:
+  SESSourceEmail:
+    Type: String
+    Description: Verified SES email address for sending notifications
+    Default: purvigandhi2002@gmail.com
 
 Resources:
-  # DynamoDB Table for Events
   EventsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -19,17 +25,6 @@ Resources:
           KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
 
-  # SNS Topic for Notifications
-  ReminderNotificationsTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: ReminderNotifications
-
-  # SQS Queue for Reminders
-  ReminderQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: ReminderQueue
 
   # IAM Role for Lambda Functions
   LambdaExecutionRole:
@@ -57,8 +52,9 @@ Resources:
                 Resource: !GetAtt EventsTable.Arn
               - Effect: Allow
                 Action:
-                  - sns:Publish
-                Resource: !Ref ReminderNotificationsTopic
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
@@ -160,7 +156,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: DeleteEvent
-      Handler: lambda_function.lambda_handler   
+      Handler: lambda_function.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Runtime: python3.9
       Code:
@@ -183,8 +179,8 @@ Resources:
         S3Key: check_reminders.zip
       Environment:
         Variables:
-          TABLE_NAME: !Ref EventsTable
-          SNS_TOPIC_ARN: !Ref ReminderNotificationsTopic
+          TABLE_NAME: !Ref EventsTable  # Fixed reference
+          SES_SOURCE_EMAIL: !Ref SESSourceEmail
       Timeout: 30
 
   # Cognito User Pool
@@ -201,11 +197,11 @@ Resources:
           AttributeDataType: String
           Mutable: true
           Required: true
-      AutoVerifiedAttributes: 
-        - email  # Enable email verification
+      AutoVerifiedAttributes:
+        - email
       MfaConfiguration: "OFF"
       EmailConfiguration:
-        EmailSendingAccount: COGNITO_DEFAULT  # Use Cognito's default email service
+        EmailSendingAccount: COGNITO_DEFAULT
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -217,7 +213,7 @@ Resources:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-      PreventUserExistenceErrors: ENABLED  # Optional: Improves security by hiding user existence
+      PreventUserExistenceErrors: ENABLED
 
   # API Gateway
   EventReminderApi:
@@ -462,31 +458,7 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EventReminderApi}/*/DELETE/events/*'
 
-  # S3 Bucket for Frontend
-  FrontendBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub event-reminder-frontend-${AWS::AccountId}
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        IgnorePublicAcls: false
-        BlockPublicPolicy: false
-        RestrictPublicBuckets: false
-
-  BucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref FrontendBucket
-      PolicyDocument:
-        Statement:
-          - Effect: Allow
-            Principal: '*'
-            Action: s3:GetObject
-            Resource: !Sub '${FrontendBucket.Arn}/*'
-
+  
 Outputs:
   UserPoolId:
     Value: !Ref UserPool
@@ -494,9 +466,4 @@ Outputs:
     Value: !Ref UserPoolClient
   ApiUrl:
     Value: !Sub 'https://${EventReminderApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
-  FrontendUrl:
-    Value: !GetAtt FrontendBucket.WebsiteURL
-  SNSTopicArn:
-    Value: !Ref ReminderNotificationsTopic
-  SQSQueueUrl:
-    Value: !Ref ReminderQueue
+  

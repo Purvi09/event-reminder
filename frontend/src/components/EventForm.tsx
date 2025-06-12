@@ -5,6 +5,7 @@ import { ErrorResponse } from '../types';
 import { config } from '../config';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { format } from 'date-fns';
 import { toast, ToastContainer } from 'react-toastify';
 
@@ -15,9 +16,20 @@ const EventForm: React.FC = () => {
   const [reminderDate, setReminderDate] = useState<Date | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const formatDateToISO = (date: Date | null): string => {
+  // Get the user's local timezone (e.g., "Asia/Kolkata")
+  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const formatDateToUTC = (date: Date | null): string => {
     if (!date) return '';
-    return format(date, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+    // Convert local date to UTC, ensuring the time reflects the user's input in their timezone
+    const utcDate = toZonedTime(date, userTimeZone);
+    return formatInTimeZone(utcDate, 'UTC', "yyyy-MM-dd'T'HH:mm:ss'Z'");
+  };
+
+  const formatDateToLocalISO = (date: Date | null): string => {
+    if (!date) return '';
+    // Format date in the user's local timezone with offset (e.g., "2025-06-12T17:00:00+05:30")
+    return formatInTimeZone(date, userTimeZone, "yyyy-MM-dd'T'HH:mm:ssXXX");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -42,8 +54,10 @@ const EventForm: React.FC = () => {
       const eventData = {
         event_name: eventName,
         event_description: eventDescription,
-        event_time: formatDateToISO(eventDate),
-        reminder_time: formatDateToISO(reminderDate),
+        event_time: formatDateToUTC(eventDate), // UTC for EventBridge
+        reminder_time: formatDateToUTC(reminderDate), // UTC for EventBridge
+        event_time_local: formatDateToLocalISO(eventDate), // Local for DynamoDB
+        reminder_time_local: formatDateToLocalISO(reminderDate), // Local for DynamoDB
       };
       
       console.log('Submitting event data:', eventData);
@@ -107,6 +121,7 @@ const EventForm: React.FC = () => {
             dateFormat="yyyy-MM-dd HH:mm"
             className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
             placeholderText="Select event date and time"
+            timeZone={userTimeZone} // Ensure DatePicker uses local timezone
             required
           />
         </div>
@@ -120,6 +135,7 @@ const EventForm: React.FC = () => {
             className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
             placeholderText="Select reminder date and time"
             maxDate={eventDate || undefined}
+            timeZone={userTimeZone} // Ensure DatePicker uses local timezone
             required
           />
         </div>

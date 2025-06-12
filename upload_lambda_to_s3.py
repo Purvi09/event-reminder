@@ -115,7 +115,6 @@ def main():
     parser.add_argument('--include-deps', action='store_true', help='Include dependencies in the Lambda packages')
     args = parser.parse_args()
     
-    # Get list of Lambda function directories
     lambda_base_path = Path(args.lambda_dir)
     lambda_dirs = [d for d in lambda_base_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
     
@@ -125,18 +124,14 @@ def main():
     
     print(f"Found {len(lambda_dirs)} Lambda functions to process")
     
-    # Find shared requirements file if it exists
     shared_requirements = os.path.join(args.lambda_dir, "requirements.txt")
     if not os.path.exists(shared_requirements):
         shared_requirements = None
     
-    # Process each Lambda function
     for lambda_dir in lambda_dirs:
-        # Create zip file with or without dependencies
         if args.include_deps:
             zip_file = create_zip_file_with_deps(str(lambda_dir), args.output_dir, shared_requirements)
         else:
-            # Simple zip without dependencies
             lambda_name = os.path.basename(str(lambda_dir))
             zip_filename = f"{args.output_dir}/{lambda_name}.zip"
             os.makedirs(args.output_dir, exist_ok=True)
@@ -152,7 +147,6 @@ def main():
             )
             zip_file = zip_filename
         
-        # Upload to S3
         s3_location = upload_to_s3(zip_file, args.bucket, args.profile)
         print(f"Successfully uploaded to {s3_location}")
     
